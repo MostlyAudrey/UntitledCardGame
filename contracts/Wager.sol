@@ -53,8 +53,8 @@ contract Wager {
     // If the challenge hasn't timed out record who this address is claiming one
     // If an address gets 2 votes pay the winner and close the challenge
 
-    mapping (string => address[2]) voter;
-    mapping (string => address[2]) votes;
+    mapping (string => address[]) voter;
+    mapping (string => address[]) votes;
     function game_completed( address payable p1, address payable p2, address observer, address payable winner ) external payable {
 
         if ( p2 < p1 )
@@ -70,29 +70,25 @@ contract Wager {
         string memory challenge = p1 < p2 ? string(abi.encodePacked(p1,p2,observer)) : string(abi.encodePacked(p2,p1,observer));
 
         // Check that the challenge is active
-        assert( challenge_timeout[challenge] > 1 && challenge_timeout[challenge] <= block.number );
+        assert( block.number < challenge_timeout[challenge]  );
 
         // Check that both players accepted the challenge
         assert( challenge_p1_amount[challenge] == challenge_p2_amount[challenge] );
-
-        // Check that the sender has not already voted
-        assert( voter[challenge][0] == msg.sender && voter[challenge][1] == msg.sender );
-
-        // If there have been no votes, save this vote as vote 0
-        if (votes[challenge][0] == address(0)) { votes[challenge][0] = winner; }
-
-        // If this vote does not match vote 0 and there hasn't been a second vote record it  
-        else if ( votes[challenge][0] != winner && votes[challenge][1] == address(0)) { votes[challenge][1] = winner; }
-
-        // If this vote matches either vote 0 or vote 1, pay out the winner and clear the challenge;
-        else if ( votes[challenge][0] == winner || votes[challenge][1] == winner )
+        
+        // If there have been no votes or there was 1 vote but they don't match, save this vote
+        if (votes[challenge].length == 0 || ( votes[challenge].length == 1 && voter[challenge][0] != msg.sender && votes[challenge][0] != winner)) { 
+		voter[challenge].push(msg.sender); 
+        	votes[challenge].push(winner); 
+        }
+        // If this vote does match vote 0 or vote 1
+        else if ( voter[challenge][0] != msg.sender && ( votes[challenge][0] == winner || (voter[challenge][1] != msg.sender && votes[challenge][1] == winner) ))
         {
-            winner.transfer( challenge_p1_amount[challenge] + challenge_p2_amount[challenge] );
-            _remove_wager( challenge, p1, p2 );
+        	winner.transfer( challenge_p1_amount[challenge] + challenge_p2_amount[challenge] );
+        	_remove_wager( challenge, p1, p2 );
         }
 
-        // If 3 votes have been cast and there is not consensus refund the challenge
-        else
+        // If 3 unique votes have been cast and there is not consensus refund the challenge
+        else if ( voter[challenge][0] != msg.sender && voter[challenge][1] != msg.sender )
         {
             p1.transfer( challenge_p1_amount[challenge] );
             p2.transfer( challenge_p2_amount[challenge] );
@@ -111,7 +107,7 @@ contract Wager {
 
         // If the wager was created and the second player has not yet accepted the wager return the initial
         // or If the challenge timed out and 2 entities did not mark the game as concluding with the same winner return paid funds to both players
-        if( challenge_p1_amount[challenge] == 0 || challenge_p2_amount[challenge] == 0 || challenge_timeout[challenge] > block.number )
+        if( challenge_p1_amount[challenge] == 0 || challenge_p2_amount[challenge] == 0 || challenge_timeout[challenge] <= block.number )
         {
             p1.transfer( challenge_p1_amount[challenge] );
             p2.transfer( challenge_p2_amount[challenge] );
@@ -123,7 +119,9 @@ contract Wager {
         challenge_p1_amount[challenge] = 0;
         challenge_p2_amount[challenge] = 0;
         challenge_timeout[challenge] = 0;
-        
+        voter[challenge].length = 0;
+        votes[challenge].length = 0;
+                
         bytes32 challenge_hash = keccak256(abi.encode(challenge));
 
         for (uint i=0; i<active_challenges[p1].length; i++) {
